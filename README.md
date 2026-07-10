@@ -18,6 +18,7 @@ Authoritative Context Hub notes live here:
 
 - `STATUS.md`: current phase, source of truth, and next work.
 - `docs/context-hub.md`: domain design and responsibility boundaries.
+- `docs/implementation-blueprint.md`: executable implementation blueprint for DTOs, storage, APIs, workflows, tests, and migration.
 
 Platform-wide center boundaries, cross-center protocols, reference matrix, and deployment blueprints live in the parent QuarkfanTools repository.
 
@@ -25,5 +26,6 @@ Platform-wide center boundaries, cross-center protocols, reference matrix, and d
 
 1. Read `AGENTS.md` and `STATUS.md`.
 2. Read `docs/context-hub.md` for the domain model, memory tiers, interfaces, and P0 scope.
-3. If the task touches cross-center protocols or platform ownership, also read the parent repository docs: `docs/platform-centers.md` and `docs/platform-interface-protocols.md`.
-4. If implementation moves into the standalone app first, update both this repository and the parent submodule pointer after committing here.
+3. Read `docs/implementation-blueprint.md` for buildable P0 contracts, storage, APIs, tests, and migration phases.
+4. If the task touches cross-center protocols or platform ownership, also read the parent repository docs: `docs/platform-centers.md` and `docs/platform-interface-protocols.md`.
+5. If implementation moves into the standalone app first, update both this repository and the parent submodule pointer after committing here.

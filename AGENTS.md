@@ -4,6 +4,7 @@
 
 1. `STATUS.md`
 2. `docs/context-hub.md`
+3. `docs/implementation-blueprint.md`
 
 边界约定：
 
