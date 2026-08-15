@@ -1,10 +1,10 @@
 # Context Hub 当前状态
 
-最后更新：2026-08-15
+最后更新：2026-08-16
 
 ## 仓库定位
 
-本仓库是 Context Hub（CH，上下文中心）的独立仓库，父项目 `QuarkfanTools` 通过 submodule 引用。当前阶段已经从纯蓝图进入 3.0 server-ready 准备：后续优先在本仓库建设可启动的 CH 服务骨架、上下文存储、检索和记忆治理最小闭环。
+本仓库是 Context Hub（CH，上下文中心）的独立仓库，父项目 `QuarkfanTools` 通过 submodule 引用。当前 `0.1.0` 已部署，完成上下文存储、检索、会话 transcript 和记忆治理闭环。
 
 ## 当前事实来源
 
@@ -29,19 +29,30 @@
 - 吸收 TencentDB Agent Memory 中适合 CH 的结构：Bot Loadout / `ContextBinding`、L0-L3 派生层的中性表达、query-only knowledge tools、检索后 scope/policy 二次复核、memory generation trace 和 injection hint。
 - 记录后续 memory 参考建议：Mem0 / OpenMemory、Letta、Zep / Graphiti、LangGraph / LangMem。
 
+## 当前实现
+
+- 已建立 Node.js 22、TypeScript、Fastify 服务，可使用内存仓储验证，也可连接 PostgreSQL。
+- 已实现 source、Bot binding、record 幂等入库、scope 隔离、freshness 阻断、关键词召回和 generation trace。
+- 已实现记忆候选、长期记忆证据要求、人工确认、召回和可审计遗忘。
+- 已提供健康检查及 sources、bindings、records、retrieve、memories、freshness、traces API。
+- 合同测试覆盖 Bot 隔离、过期知识阻断和长期记忆生命周期。
+
 ## 下一步建议
 
 1. 补充 Mem0 / OpenMemory、Letta、Zep / Graphiti、LangGraph / LangMem 源码级评估，重点看用户记忆、agent memory、temporal graph memory、checkpoint memory、记忆删除和冲突处理。
-2. 建立 CH server P0 工程骨架：启动入口、配置加载、HTTP/RPC 管理面、`healthz`、`readyz`、`version`、结构化日志和测试命令。
-3. 落 source / binding / record / keyword index / memory candidate / confirmed memory / forget audit 的最小 repository。
-4. 将 Skill knowledge、受控飞书缓存引用、会话摘要、Bot 授权和 runtime context 注入路径映射到 CH P0 合同。
-5. 按蓝图落 CH 管理面可见性：source list、Bot loadout、fresh/stale、index status、memory candidates、generation trace、confirmed memories、recall test、used context trace、forget/audit。
-6. 为 source、binding、ingestion、retrieval、memory、cleanup 和 diagnostics 建合同测试。
+2. 增加中文分词、向量/混合检索、rerank 和可替换 embedding provider。
+3. 将 Skill knowledge、受控飞书缓存引用、会话摘要和 runtime context 注入接到当前合同。
+4. 增加候选冲突合并、保留期/清理任务、数据导出/删除和策略决策记录。
+5. 补 PostgreSQL 集成测试、负载测试和 Dashboard 管理面。
 
 ## 验证
 
-当前仓库暂无构建命令。文档阶段常规验证：
+工程验证：
 
 ```bash
+npm install
+npm run typecheck
+npm test
+npm run build
 git diff --check
 ```
