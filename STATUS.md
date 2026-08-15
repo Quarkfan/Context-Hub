@@ -4,7 +4,7 @@
 
 ## 仓库定位
 
-本仓库是 Context Hub（CH，上下文中心）的独立仓库，父项目 `QuarkfanTools` 通过 submodule 引用。当前阶段以文档和合同为事实来源，后续实现可以先在单机版内落 facade，再逐步迁移到本仓库。
+本仓库是 Context Hub（CH，上下文中心）的独立仓库，父项目 `QuarkfanTools` 通过 submodule 引用。当前阶段已经从纯蓝图进入 3.0 server-ready 准备：后续优先在本仓库建设可启动的 CH 服务骨架、上下文存储、检索和记忆治理最小闭环。
 
 ## 当前事实来源
 
@@ -32,10 +32,11 @@
 ## 下一步建议
 
 1. 补充 Mem0 / OpenMemory、Letta、Zep / Graphiti、LangGraph / LangMem 源码级评估，重点看用户记忆、agent memory、temporal graph memory、checkpoint memory、记忆删除和冲突处理。
-2. 在单机版 `QuarkfanTools-Single/` 内先建立 `ContextHub` facade，不急于拆独立进程。
-3. 将现有 Skill knowledge、受控飞书缓存、会话摘要、Bot 授权和 runtime context 注入路径映射到 CH P0 合同。
-4. 按蓝图落 CH 管理面可见性：source list、Bot loadout、fresh/stale、index status、memory candidates、generation trace、confirmed memories、recall test、used context trace、forget/audit。
-5. 为 source、binding、ingestion、retrieval、memory、cleanup 和 diagnostics 建合同测试。
+2. 建立 CH server P0 工程骨架：启动入口、配置加载、HTTP/RPC 管理面、`healthz`、`readyz`、`version`、结构化日志和测试命令。
+3. 落 source / binding / record / keyword index / memory candidate / confirmed memory / forget audit 的最小 repository。
+4. 将 Skill knowledge、受控飞书缓存引用、会话摘要、Bot 授权和 runtime context 注入路径映射到 CH P0 合同。
+5. 按蓝图落 CH 管理面可见性：source list、Bot loadout、fresh/stale、index status、memory candidates、generation trace、confirmed memories、recall test、used context trace、forget/audit。
+6. 为 source、binding、ingestion、retrieval、memory、cleanup 和 diagnostics 建合同测试。
 
 ## 验证
 
