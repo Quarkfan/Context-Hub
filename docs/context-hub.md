@@ -41,6 +41,7 @@ CH 必须满足：
 - Open WebUI：Knowledge / Directory / File 模型、访问授权、RAG tool、知识事件。
 - Dify：dataset / knowledge config、process rule、retrieval DTO、metadata filtering、rerank。
 - LlamaIndex：Document / Node / Relationship / NodeWithScore / Retriever 抽象。
+- TencentDB Agent Memory：L0-L3 memory layering、Memory Asset、Agent Loadout、ACL、query-only knowledge tools、memory generation trace。
 
 这些项目对“知识库和 RAG”参考价值很高，但对“记忆系统”不足。CH 后续建议补充第二批 memory 参考：
 
@@ -57,6 +58,7 @@ CH 必须满足：
 - 可以直接依赖成熟项目，也可以只借鉴接口、状态机、数据结构、测试方法或少量许可允许的代码片段。
 - 记忆类项目要特别关注删除、纠错、冲突、隐私、跨 Bot 隔离和用户可见编辑能力。
 - CH 第一版先使用 QuarkfanTools 自有 DTO 和最小实现，不直接绑定某个大型项目。
+- 对 TencentDB Agent Memory 这类完整平台，应吸收领域模型，不直接继承其产品边界：MemoryProxy 属于接入/运行时形态参考，不能让 CH 变成透明 LLM 代理；Skill 生命周期仍归能力注册中心。
 
 ## 4. 核心概念
 
@@ -109,7 +111,36 @@ interface ContextCollection {
 }
 ```
 
-### 4.3 ContextRecord
+### 4.3 ContextBinding
+
+`ContextBinding` 是 Bot 的上下文装配关系，也就是某个 Bot 可以携带哪些上下文、以什么方式使用。它解决“source 存在”和“Bot 可用”之间的边界。
+
+```ts
+type ContextBindingMode = "direct" | "summary" | "tool" | "reference" | "disabled";
+
+interface ContextBinding {
+  bindingId: string;
+  botId: string;
+  sourceId?: string;
+  collectionId?: string;
+  recordSelector?: Record<string, unknown>;
+  mode: ContextBindingMode;
+  priority: number;
+  scope: ContextScope;
+  status: "active" | "paused" | "revoked";
+  createdBy: ContextActor;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+规则：
+
+- Bot 默认只能使用被 binding 明确装配的 source/collection。
+- `direct` 表示可直接进入 runtime context；`summary` 表示优先压缩；`tool` 表示只暴露查询工具或受控读取入口；`reference` 表示仅作为引用或 citation；`disabled` 表示保留关系但不参与召回。
+- Binding 不替代治理判定；它只是候选可见性，最终仍要经过 Policy Bridge。
+
+### 4.4 ContextRecord
 
 `ContextRecord` 是 CH 的统一上下文事实。知识文档、记忆条目、摘要、实体、关系、chunk 都可以被表达为 record，但通过 type 区分。
 
@@ -144,17 +175,19 @@ interface ContextRecord {
 }
 ```
 
-### 4.4 ContextMemory
+### 4.5 ContextMemory
 
 `ContextMemory` 是专门的记忆视图，不是单独脱离 ContextRecord 的事实表。它用于表达记忆的层级、生命周期和写入治理。
 
 ```ts
 type MemoryTier = "short-term" | "mid-term" | "long-term";
+type MemoryDerivationLevel = "raw-evidence" | "atomic" | "scenario" | "profile";
 
 interface ContextMemory {
   memoryId: string;
   recordId: string;
   tier: MemoryTier;
+  derivationLevel: MemoryDerivationLevel;
   subject: {
     botId?: string;
     userId?: string;
@@ -165,12 +198,22 @@ interface ContextMemory {
   memoryKind: "fact" | "preference" | "instruction" | "project-state" | "relationship" | "summary";
   writeState: "candidate" | "confirmed" | "rejected" | "superseded";
   evidenceRefs: string[];
+  generationTraceRef?: string;
   expiresAt?: string;
   lastReinforcedAt?: string;
 }
 ```
 
-### 4.5 ContextScope
+派生层级含义：
+
+- `raw-evidence`：原始证据或受控引用，例如会话片段、工具结果摘要、文档快照引用。
+- `atomic`：从证据中抽取出的单条事实、偏好、约束、事件或指令。
+- `scenario`：围绕项目、客户、任务或场景组织的阶段性上下文。
+- `profile`：长期稳定画像、组织知识、工作偏好或高层策略。
+
+`MemoryTier` 表达生命周期，`MemoryDerivationLevel` 表达抽象粒度；两者不能混用。例如 `scenario` 可以是中期项目状态，也可以在确认后成为长期项目记忆。
+
+### 4.6 ContextScope
 
 `ContextScope` 是隔离边界。
 
@@ -192,8 +235,16 @@ interface ContextScope {
 - 私聊记忆默认属于 `botId + userId/conversationId`。
 - 群聊记忆默认属于 `botId + conversationId + senderId` 或明确的项目空间。
 - 长期记忆写入必须有明确 scope，不允许写入无主全局记忆。
+- 检索结果即使已由索引层按 scope 过滤，返回前仍必须二次复核 scope 和 policy，防止索引或 adapter 漏过滤。
 
 ## 5. 记忆分层
+
+记忆同时有两条轴：
+
+- 生命周期轴：短期、中期、长期。
+- 派生粒度轴：raw-evidence、atomic、scenario、profile。
+
+CH 的写入流程应先保存或引用证据，再生成候选，最后由确认、策略或多证据强化把候选提升为 confirmed memory。不能让抽取结果绕过候选态直接成为长期事实。
 
 ### 5.1 短期记忆
 
@@ -250,14 +301,28 @@ interface ContextScope {
 - 对敏感内容需要治理策略。
 - 冲突时不得静默覆盖，应标记 conflict 或 superseded。
 
+### 5.4 派生记忆层
+
+参考 L0-L3 记忆系统，CH 采用中性命名表达派生层：
+
+| 派生层 | 保存什么 | 典型来源 | 典型用途 |
+| --- | --- | --- | --- |
+| raw-evidence | 原始证据或受控引用 | 会话摘要、工具结果、文档 snapshot、人工笔记 | 溯源、核对、重新抽取 |
+| atomic | 单条事实、偏好、规则、事件 | LLM/规则抽取、用户明确保存 | 精确召回、冲突检测 |
+| scenario | 项目/客户/任务场景块 | 会话摘要聚合、项目阶段总结 | 恢复上下文、继续任务 |
+| profile | 稳定画像、组织知识、长期偏好 | 多次强化、Owner 确认、受信源同步 | 跨会话稳定背景 |
+
+派生层不是存储孤岛；它们仍然落到 `ContextRecord` 和 `ContextMemory`，通过 relationships、evidenceRefs 和 generationTraceRef 串起来。
+
 ## 6. Context Hub 模块
 
 | 模块 | 职责 |
 | --- | --- |
 | Source Registry | 管理上下文来源、连接器、source scope、freshness key |
 | Collection Manager | 管理知识库、记忆域、项目上下文集合 |
+| Binding Manager | 管理 Bot 对 source/collection/record 的装配关系、binding mode、优先级和可见性 |
 | Ingestion Pipeline | 文档解析、切块、摘要、实体抽取、索引写入 |
-| Memory Manager | 记忆候选、确认、强化、过期、遗忘、冲突处理 |
+| Memory Manager | 记忆候选、确认、强化、过期、遗忘、冲突处理和生成溯源 |
 | Context Store | 保存 ContextRecord、Memory、Chunk、Entity、Relationship、Snapshot |
 | Retrieval Engine | 关键词、向量、混合检索、metadata filtering、rerank、freshness filtering |
 | Policy Bridge | 调用治理中心判断可读、可写、可进入模型上下文 |

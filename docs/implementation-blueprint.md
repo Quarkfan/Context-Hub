@@ -10,9 +10,11 @@ P0 必须做到：
 
 - 上下文源、知识、记忆、摘要、chunk、freshness、权限和审计都有统一 DTO。
 - 一个 Bot 一个默认隔离上下文域；未经授权的来源不能被召回、入模或写入长期记忆。
+- Bot 对上下文源和集合的可用性通过 `ContextBinding` 明确装配，支持 direct / summary / tool / reference / disabled 等使用模式。
 - Skill `knowledge/`、受控飞书文件/文档缓存、会话摘要和手工记忆都通过 CH facade 进入 runtime context。
-- 召回结果必须带来源、scope、freshness、置信度、引用和 auditRef。
+- 召回结果必须带来源、scope、freshness、置信度、引用、injectionHint 和 auditRef。
 - 记忆写入必须先成为 candidate，再通过用户/Owner/策略/多证据强化进入 confirmed。
+- 记忆候选必须保留 evidenceRefs、derivationLevel 和 generationTraceRef，能解释它从什么证据、什么策略或 prompt 版本生成。
 - stale、冲突、删除、遗忘、权限缺失和部分失败必须显式返回，不能静默吞掉。
 - 管理面能看到 source list、index status、fresh/stale、memory candidates、confirmed memories、recall trace 和 forget/audit。
 
@@ -33,9 +35,10 @@ CH 内部拆成八个工程模块。P0 可以先在单机版里实现为一个 `
 | --- | --- | --- | --- |
 | Source Registry | 管理上下文来源、source scope、connector/resource 引用、freshness key | `sources/*.json` | `sources list/status/probe` |
 | Collection Manager | 管理知识库、记忆域、项目上下文集合、Bot 默认域 | `collections/*.json` | `collections list/create/update` |
+| Binding Manager | 管理 Bot context loadout、source/collection 装配、binding mode 和优先级 | `bindings/*.json`、Bot view | `bindings list/upsert/revoke` |
 | Ingestion Pipeline | 解析、切块、摘要、索引、入库、增量刷新 | `ingestion-runs.jsonl`、`records.jsonl`、`chunks.jsonl` | `ingestSource`、`refreshSource` |
-| Memory Manager | 记忆候选、确认、拒绝、强化、过期、冲突、遗忘 | `memories.jsonl`、`memory-events.jsonl` | `memory propose/confirm/reject/forget` |
-| Context Store | 保存 ContextRecord、Chunk、Memory、Relationship、Snapshot、Audit | JSONL / SQLite | store repository |
+| Memory Manager | 记忆候选、确认、拒绝、强化、过期、冲突、遗忘、生成溯源 | `memories.jsonl`、`memory-events.jsonl`、`memory-generation-traces.jsonl` | `memory propose/confirm/reject/forget` |
+| Context Store | 保存 ContextRecord、Chunk、Memory、Relationship、Snapshot、Binding、Audit | JSONL / SQLite | store repository |
 | Retrieval Engine | keyword P0、metadata filter、freshness filter、score、引用重建 | `indexes/keyword/*` | `retrieveContext` |
 | Policy Bridge | 调用治理中心判断可读、可写、可入模、可导出、可遗忘 | policy audit refs | `checkContextPolicy` |
 | Diagnostics | 召回日志、入库日志、记忆事件、source probe、排障摘要 | `recall-history.jsonl`、`diagnostics/*.jsonl` | `diagnostics export/query` |
@@ -44,6 +47,7 @@ CH 内部拆成八个工程模块。P0 可以先在单机版里实现为一个 `
 
 - Source Registry 不保存正文，只保存来源、scope、连接器和 freshness 摘要。
 - Ingestion Pipeline 不决定 Bot 是否可以使用结果，只写入带 scope 的记录。
+- Binding Manager 不扩大权限，只记录 Bot 的上下文装配候选；每次读取、入模、导出和遗忘仍必须走 Policy Bridge。
 - Retrieval Engine 不直接读取平台文件和 token，只读取 CH store 和受控 `resourceRef/contentRef`。
 - Memory Manager 不直接调用 runtime，不把模型输出直接确认为长期记忆。
 - Policy Bridge 是所有 read/write/use-in-model/export/forget 的必经检查点。
@@ -150,7 +154,35 @@ interface ContextCollection {
 }
 ```
 
-### 3.3 Freshness / Snapshot
+### 3.3 Binding / Loadout
+
+```ts
+type ContextBindingMode = "direct" | "summary" | "tool" | "reference" | "disabled";
+
+interface ContextBinding {
+  bindingId: string;
+  botId: string;
+  sourceId?: string;
+  collectionId?: string;
+  recordSelector?: Record<string, unknown>;
+  mode: ContextBindingMode;
+  priority: number;
+  scope: ContextScope;
+  status: "active" | "paused" | "revoked";
+  createdBy: ContextActor;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+约束：
+
+- P0 把 Binding 作为 Bot context loadout 的事实来源，替代散落的 `authorized-sources.json` 语义。
+- `mode=tool` 表示只暴露受控查询/读取入口，不直接把正文放入 runtime context。
+- `mode=reference` 表示只用于 citation、source hint 或用户可见引用，不参与模型上下文。
+- Retrieval Engine 可以用 binding 预筛候选，但返回前仍必须逐条 scope/policy 二次复核。
+
+### 3.4 Freshness / Snapshot
 
 ```ts
 interface ContextFreshness {
@@ -183,7 +215,7 @@ interface ContextSnapshot {
 - P0 允许 stale-but-marked，但 `fresh-only` 召回必须过滤 stale records。
 - 源不可达时不能直接删除旧索引，应标记 `unknown/failed` 并保留可审计状态。
 
-### 3.4 Record / Chunk / Relationship
+### 3.5 Record / Chunk / Relationship
 
 ```ts
 type ContextRecordType =
@@ -255,15 +287,17 @@ P0 存储建议：
 - `credential/restricted` sensitivity 默认不能入模，除非治理中心显式允许并附带 obligations。
 - 删除时记录状态和审计，不保留可恢复正文到普通检索索引。
 
-### 3.5 Memory
+### 3.6 Memory
 
 ```ts
 type MemoryTier = "short-term" | "mid-term" | "long-term";
+type MemoryDerivationLevel = "raw-evidence" | "atomic" | "scenario" | "profile";
 
 interface ContextMemory {
   memoryId: string;
   recordId: string;
   tier: MemoryTier;
+  derivationLevel: MemoryDerivationLevel;
   subject: ContextScope;
   memoryKind: "fact" | "preference" | "instruction" | "project-state" | "relationship" | "summary";
   writeState: "candidate" | "confirmed" | "rejected" | "superseded" | "expired" | "forgotten";
@@ -271,6 +305,7 @@ interface ContextMemory {
   evidenceRefs: string[];
   proposedBy: ContextActor;
   confirmedBy?: ContextActor;
+  generationTraceRef?: string;
   expiresAt?: string;
   lastReinforcedAt?: string;
   conflictWithMemoryIds?: string[];
@@ -286,7 +321,28 @@ interface MemoryCandidate {
   evidenceRefs: string[];
   risk: "low" | "medium" | "high";
   requiredConfirmation: "none" | "user" | "owner" | "policy";
+  generationTrace?: ContextMemoryGenerationTrace;
   createdAt: string;
+}
+
+interface ContextMemoryGenerationTrace {
+  traceId: string;
+  candidateId?: string;
+  memoryId?: string;
+  derivationLevel: MemoryDerivationLevel;
+  sourceRecordIds: string[];
+  sourceChunkIds?: string[];
+  evidenceRefs: string[];
+  extractionPolicyRef?: string;
+  promptRef?: {
+    promptId: string;
+    version: number;
+    contentHash: string;
+  };
+  modelRef?: string;
+  createdBy: ContextActor;
+  createdAt: string;
+  auditRef: string;
 }
 ```
 
@@ -295,12 +351,16 @@ interface MemoryCandidate {
 - `short-term` 可以随任务或会话清理，不默认进入长期 store。
 - `mid-term` 默认 TTL，适合恢复上下文和近期项目状态。
 - `long-term` 必须 confirmed，且必须有 evidenceRefs。
+- `raw-evidence` 只能作为证据或短期/中期引用，不能被当成长期事实直接入模。
+- `atomic/scenario/profile` 都可以先成为 candidate，再按确认流程进入 confirmed。
 - 冲突不能静默覆盖，必须产生 `contradicts/supersedes` 关系或冲突状态。
+- `generationTrace` 不保存未脱敏 prompt 正文；只保存 ID、版本、hash、输入输出引用和 auditRef。
 
-### 3.6 Retrieval
+### 3.7 Retrieval
 
 ```ts
 type RetrievalMode = "keyword" | "semantic" | "hybrid" | "graph";
+type ContextInjectionHint = "direct" | "summary" | "tool" | "reference" | "citation-only";
 
 interface ContextRetrieveRequest {
   requestId: string;
@@ -337,10 +397,12 @@ interface ContextRetrieveRecord {
   textPreview: string;
   score: number;
   confidence?: number;
+  injectionHint: ContextInjectionHint;
   freshness: ContextFreshness;
   sensitivity: ContextRecord["sensitivity"];
   citation: ContextCitation;
   policyAuditRef: string;
+  bindingId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -349,10 +411,17 @@ interface ContextRetrieveResult {
   records: ContextRetrieveRecord[];
   staleRecords: ContextRetrieveRecord[];
   missingPermissions: PolicyObjectRef[];
+  filteredByScope: PolicyObjectRef[];
   partialFailures: ContextPartialFailure[];
   auditRefs: string[];
 }
 ```
+
+规则：
+
+- `injectionHint` 是 CH 给 Runtime 的使用建议，不等于 CH 修改 prompt。Runtime Center 负责最终上下文组装。
+- Retrieval Engine 必须在 index search 后重新检查 scope、binding 和 policy；过滤掉的候选写入 `filteredByScope` 或 diagnostics。
+- query-only knowledge tools 返回的内容也必须转成 `ContextRetrieveRecord` 或受控 `contentRef` 后才能入模。
 
 ## 4. 存储布局
 
@@ -364,11 +433,14 @@ state/context-hub/
     <source-id>.json
   collections/
     <collection-id>.json
+  bindings/
+    <binding-id>.json
   records.jsonl
   chunks.jsonl
   relationships.jsonl
   memories.jsonl
   memory-candidates.jsonl
+  memory-generation-traces.jsonl
   snapshots.jsonl
   ingestion-runs.jsonl
   recall-history.jsonl
@@ -388,7 +460,7 @@ Bot 视图：
 
 ```text
 state/bots/<bot-id>/context/
-  authorized-sources.json
+  bindings.json
   default-collections.json
   memory-candidates.jsonl
   confirmed-memories.jsonl
@@ -400,6 +472,7 @@ state/bots/<bot-id>/context/
 
 - `records.jsonl/chunks.jsonl/memories.jsonl` 是 append-friendly 事实日志，最新状态可由 compact 任务生成快照。
 - `contentRef/resourceRef` 指向资源中心托管内容，CH 不重复保存大文件和原始附件。
+- `bindings/*.json` 是 Bot context loadout 的管理事实，不能从 source 文件存在性反推。
 - 任何索引项必须能反查到 record/chunk，并在 forget/delete 后被清理或 tombstone。
 - diagnostics 默认脱敏；需要导出正文必须走治理中心。
 
@@ -415,6 +488,9 @@ P0 管理面可先作为 Electron IPC / local service API，后续再映射 CLI 
 | `ch.sources.refresh` | UI / scheduler | 触发增量入库/索引 |
 | `ch.collections.list` | UI / runtime | 查看集合 |
 | `ch.collections.updatePolicy` | UI / governance | 调整召回和写入策略 |
+| `ch.bindings.list` | UI / runtime admin | 查看 Bot 已装配上下文 |
+| `ch.bindings.upsert` | UI / owner / governance | 给 Bot 装配 source/collection/record selector |
+| `ch.bindings.revoke` | UI / owner / governance | 暂停或撤销 Bot 上下文装配 |
 | `ch.retrieve` | runtime / tool / scheduler | 上下文召回 |
 | `ch.recall.trace` | UI / diagnostics | 查看一次回复使用了哪些上下文 |
 | `ch.memory.propose` | runtime / scheduler | 创建记忆候选 |
@@ -444,8 +520,10 @@ interface ContextRecallTraceView {
   botId?: string;
   queryPreview: string;
   recordIds: string[];
+  bindingIds: string[];
   deniedSourceIds: string[];
   staleRecordIds: string[];
+  scopeFilteredRecordIds: string[];
   partialFailures: ContextPartialFailure[];
   createdAt: string;
 }
@@ -465,6 +543,19 @@ interface ContextRecallTraceView {
 
 - 同一个外部文档可以被多个 Bot 授权，但每个 Bot 的可见性独立。
 - 禁止只有路径或 URL、没有 scope 的 source 进入 active 状态。
+
+### 6.1.1 Bot Context Binding
+
+1. UI / Owner / Policy 调用 `ch.bindings.upsert`，提交 botId、sourceId/collectionId/recordSelector、mode、priority。
+2. CH 检查 `context.admin` 或对应 source/collection 的 `context.read` + `context.use_in_model` 预授权。
+3. Binding Manager 写入 `ContextBinding`。
+4. Diagnostics 写 binding-upserted 事件。
+
+验收点：
+
+- source 存在但没有 active binding 时，默认不参与 Bot 召回。
+- binding mode 影响召回结果的 `injectionHint`，但不替代最终 policy 判定。
+- revoke 后新召回不能返回该 binding 下的内容；旧 recall trace 只保留脱敏审计。
 
 ### 6.2 入库 / 刷新
 
@@ -487,28 +578,33 @@ interface ContextRecallTraceView {
 ### 6.3 上下文召回
 
 1. Runtime / Tool 调用 `ch.retrieve`，传入 actor、scope、query、source selectors、memory tiers。
-2. Policy Bridge 对候选 source/collection 做 `context.read`。
-3. Retrieval Engine 读取 keyword index 和 memory records。
-4. 应用 metadata filter、freshness filter、scope filter。
-5. 计算 score，并重建 citation。
-6. 若 `useInModel=true`，逐条检查 `context.use_in_model`。
-7. 返回 records、staleRecords、missingPermissions、partialFailures、auditRefs。
-8. 写 recall-history 和 used-context trace。
+2. Binding Manager 解析 Bot 的 active bindings，结合 request selectors 形成候选 source/collection/record selector。
+3. Policy Bridge 对候选 source/collection/binding 做 `context.read`。
+4. Retrieval Engine 读取 keyword index 和 memory records。
+5. 应用 metadata filter、freshness filter、scope filter。
+6. 对 index 返回候选逐条做 scope/binding/policy 二次复核。
+7. 计算 score，生成 injectionHint，并重建 citation。
+8. 若 `useInModel=true`，逐条检查 `context.use_in_model`。
+9. 返回 records、staleRecords、missingPermissions、filteredByScope、partialFailures、auditRefs。
+10. 写 recall-history 和 used-context trace。
 
 硬规则：
 
 - `missingPermissions` 不能被吞掉，UI 和 runtime 应能看见。
 - `staleRecords` 不能混入 `records`，除非请求允许 `allow-stale-marked`。
 - `restricted/credential` 不能入模，除非 Policy 返回明确 obligation 和 auditRef。
+- index 层过滤不是信任边界；返回前必须二次复核 scope、binding 和 policy。
+- `tool/reference/citation-only` 不能被 Runtime 当成 direct 正文注入，除非重新通过 use-in-model 检查。
 
 ### 6.4 记忆候选
 
 1. Runtime / Scheduler 提供消息摘要、工具结果、用户明确指令或项目状态。
-2. Memory Manager 生成 `MemoryCandidate`。
-3. Policy Bridge 检查 `context.write`。
-4. 对高风险候选标记 `requiredConfirmation=owner`。
-5. 写入 `memory-candidates.jsonl`。
-6. UI 展示候选、证据、风险和作用 scope。
+2. Memory Manager 先确定 derivationLevel：raw-evidence、atomic、scenario 或 profile。
+3. Memory Manager 生成 `MemoryCandidate` 和 `ContextMemoryGenerationTrace`。
+4. Policy Bridge 检查 `context.write`。
+5. 对高风险候选标记 `requiredConfirmation=owner`。
+6. 写入 `memory-candidates.jsonl` 和 `memory-generation-traces.jsonl`。
+7. UI 展示候选、证据、风险、derivationLevel、生成策略和作用 scope。
 
 候选来源：
 
@@ -516,6 +612,7 @@ interface ContextRecallTraceView {
 - 同一事实在多个证据中重复出现。
 - 项目状态或任务状态需要跨会话恢复。
 - 受信知识源同步出来的长期事实。
+- 会话摘要或工具结果作为 raw-evidence，后续抽取为 atomic/scenario/profile 候选。
 
 禁止来源：
 
@@ -523,13 +620,14 @@ interface ContextRecallTraceView {
 - 未授权群聊成员的个人信息。
 - 低可信工具输出。
 - 含凭据、敏感正文或未脱敏客户数据的片段。
+- 没有 evidenceRefs 或 generationTrace 的抽取结果。
 
 ### 6.5 记忆确认 / 遗忘
 
 确认：
 
 1. UI / Owner / Policy 调用 `ch.memory.confirm`。
-2. 检查 candidate scope 和 evidenceRefs。
+2. 检查 candidate scope、derivationLevel、evidenceRefs 和 generationTraceRef。
 3. 检测冲突记忆。
 4. 写 ContextRecord + ContextMemory confirmed。
 5. 更新 index。
@@ -548,6 +646,7 @@ interface ContextRecallTraceView {
 - confirmed memory 必须可在 UI 中查看、编辑、删除。
 - forget 后召回不能返回正文或旧 chunk。
 - 审计可以证明发生过遗忘动作，但不能泄露被遗忘正文。
+- 记忆编辑、supersede 和 forget 必须保留 generation trace 的脱敏引用，方便解释记忆来源但不泄露已遗忘正文。
 
 ## 7. 适配器合同
 
@@ -599,8 +698,9 @@ P0 管理面至少包含：
 
 - Sources：名称、类型、Bot scope、freshness、last probe、last indexed、record/chunk count、last error。
 - Collections：集合类型、绑定 sources、检索策略、写入策略、retention。
+- Bot Loadout：每个 Bot 已装配的 source/collection/record selector、binding mode、priority、status 和最近使用情况。
 - Recall Test：输入 query，选择 Bot/source/memory tier，查看 records/stale/denied/partial failures。
-- Memory Candidates：候选内容摘要、证据、风险、确认/拒绝。
+- Memory Candidates：候选内容摘要、证据、风险、derivationLevel、generation trace、确认/拒绝。
 - Confirmed Memories：按 Bot/user/conversation/project 过滤，支持编辑、supersede、forget。
 - Recall Trace：某次 runtime 使用了哪些上下文，哪些被拒绝，哪些 stale。
 - Diagnostics：source probe、ingestion runs、policy denials、forget events。
@@ -620,6 +720,7 @@ P0 清理规则：
 | short-term memory | 任务结束或 24 小时 | 定时清理 |
 | mid-term memory candidate | 30 天 | 过期变 expired |
 | rejected candidate | 30 天 | 保留脱敏审计后清理正文 |
+| memory-generation-trace | 90 天或随候选/记忆策略 | 保留 ID/hash/refs，清理未脱敏输入输出 |
 | confirmed long-term memory | 直到用户删除或策略过期 | forget/supersede |
 | recall-history | 30 天 | 脱敏压缩或删除 |
 | ingestion-runs | 90 天 | 保留摘要 |
@@ -631,6 +732,7 @@ P0 清理规则：
 - records/chunks 正文引用。
 - keyword/vector index。
 - memory candidate 正文。
+- memory generation trace 中的未脱敏输入输出引用。
 - recall trace 中的 preview。
 - diagnostics 中可能残留的 source title/path。
 
@@ -646,15 +748,17 @@ P0 清理规则：
 ### 阶段二：本地 store 和管理面
 
 - 增加 `state/context-hub/` 本地存储。
-- 增加 source list、fresh/stale、recall trace、memory candidates UI。
+- 增加 source list、Bot loadout、fresh/stale、recall trace、memory candidates UI。
 - 定时任务接入 source refresh。
 - 空间清理接入 CH retention。
 
 ### 阶段三：记忆治理
 
 - 接入会话摘要作为 mid-term candidate。
+- 支持 raw-evidence / atomic / scenario / profile 派生层。
 - 支持手工确认 long-term memory。
 - 支持 forget、supersede、conflict。
+- 支持 memory generation trace 和可解释候选。
 - Runtime 使用 confirmed memory 和 recent summary。
 
 ### 阶段四：索引增强
@@ -681,10 +785,14 @@ P0 必须覆盖以下测试：
 | Ingestion | 同一 source freshness 未变化 | 跳过入库并记录 skipped |
 | Ingestion | 文档更新 | 新 record active，旧 record stale/superseded |
 | Retrieval | Bot 未授权 source | 返回 missingPermissions |
+| Retrieval | source 存在但无 active binding | 不返回 records，trace 标明未装配 |
+| Retrieval | index 返回跨 scope 候选 | 二次复核过滤并写 filteredByScope |
 | Retrieval | fresh-only + stale record | stale 不进入 records |
 | Retrieval | allow-stale-marked | stale 进入 staleRecords 或带标记返回 |
 | Retrieval | restricted record useInModel | 需要 policy allow，否则过滤 |
+| Retrieval | binding mode=tool/reference | 返回 tool/reference/citation hint，不直接作为正文入模 |
 | Memory | 模型单次推断 | 只能成为 candidate 或被拒绝，不能 confirmed |
+| Memory | 候选无 evidenceRefs/generationTrace | 拒绝或标记 high risk |
 | Memory | Owner 确认 | candidate 变 confirmed 并可召回 |
 | Memory | 冲突事实 | 标记 conflict/contradicts，不静默覆盖 |
 | Memory | forget | 正文和索引不可召回，仅保留脱敏 audit |
@@ -696,16 +804,17 @@ P0 必须覆盖以下测试：
 P0 可认为完成，当且仅当：
 
 1. Runtime 获取 Skill knowledge / 飞书缓存 / 会话摘要 / confirmed memory 都通过 CH facade。
-2. Bot scope 能阻止未授权 source 或其他 Bot memory 被召回。
-3. 一次召回可以在 UI 或日志里看到 source、record、freshness、score、policy audit 和 missing permissions。
-4. 用户可以确认、拒绝、遗忘长期记忆。
-5. Source 不可达、权限失败、stale、部分失败都可见。
-6. 空间清理能覆盖 CH records、chunks、index、memory candidates、recall trace 和 diagnostics。
-7. 文档中的 DTO、API、状态机和测试矩阵至少有一组实现或合同测试对应。
+2. Bot context loadout 能明确展示并控制可用 source/collection/record selector。
+3. Bot scope 和 retrieval 后二次复核能阻止未授权 source 或其他 Bot memory 被召回。
+4. 一次召回可以在 UI 或日志里看到 source、binding、record、freshness、score、injectionHint、policy audit、filteredByScope 和 missing permissions。
+5. 用户可以确认、拒绝、遗忘长期记忆，并看到候选的 evidence、derivationLevel 和 generation trace 摘要。
+6. Source 不可达、权限失败、stale、部分失败都可见。
+7. 空间清理能覆盖 CH records、chunks、index、bindings、memory candidates、generation traces、recall trace 和 diagnostics。
+8. 文档中的 DTO、API、状态机和测试矩阵至少有一组实现或合同测试对应。
 
 ## 13. 当前建议
 
 - P0 从 keyword retrieval 开始，先把边界、权限、freshness、可见性和记忆治理做稳。
 - 不急于接向量库；向量能力应在 Index Adapter 稳定后进入。
-- 第二批 memory 参考项目应在实现长期记忆前完成源码级评估，尤其关注 deletion、conflict、temporal validity 和 user-visible editing。
+- TencentDB Agent Memory 的 Bot Loadout、L0-L3 派生层、query-only knowledge tools、strict isolation 和 generation trace 已纳入 CH 合同；后续继续评估 Mem0 / OpenMemory、Letta、Zep / Graphiti、LangGraph / LangMem。
 - CH 的价值不是“把更多内容塞进 prompt”，而是让 runtime 使用的上下文变得可授权、可解释、可更新、可删除、可审计。
