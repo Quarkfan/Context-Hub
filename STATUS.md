@@ -37,6 +37,7 @@
 - 已提供健康检查及 sources、bindings、records、retrieve、memories、freshness、traces API。
 - Source 和 Bot Binding 已提供显式 list/detail/create/update/delete API、依赖保护和 Dashboard 管理界面；高级配置覆盖 scope、source config 和 binding tags。
 - 合同测试覆盖 Bot 隔离、过期知识阻断、长期记忆生命周期和配置 CRUD，共 8 项。
+- 已明确 Runtime Session Event Ledger 与 CH 上下文/记忆边界，并设计 Context Processor provider、可追溯 materialization 和不删除源事件的 compaction artifact；见 `docs/session-context-projection.md`。
 
 ## 下一步建议
 
@@ -45,6 +46,7 @@
 3. 将 Skill knowledge、受控飞书缓存引用、会话摘要和 runtime context 注入接到当前合同。
 4. 增加候选冲突合并、保留期/清理任务、数据导出/删除和策略决策记录。
 5. 补 PostgreSQL 集成测试和负载测试。
+6. Implement cited Context Materialization and Context Processor provider contracts after the shared extensibility envelopes land in Platform Contracts.
 
 ## 验证
 

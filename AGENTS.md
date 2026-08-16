@@ -5,6 +5,7 @@
 1. `STATUS.md`
 2. `docs/context-hub.md`
 3. `docs/implementation-blueprint.md`
+4. `docs/session-context-projection.md` when sessions, context projection, compaction or memory promotion are involved.
 
 边界约定：
 
