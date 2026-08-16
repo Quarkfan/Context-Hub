@@ -79,6 +79,21 @@ export function buildApp(o: BuildOptions): FastifyInstance {
         );
   });
   app.setErrorHandler((e, req, reply) => {
+    if (
+      !(e instanceof HubError) &&
+      e instanceof Error &&
+      "statusCode" in e &&
+      typeof e.statusCode === "number"
+    )
+      return reply
+        .code(e.statusCode)
+        .send(
+          fail(
+            e.statusCode === 404 ? "NOT_FOUND" : "CONFLICT",
+            e.message,
+            req.id,
+          ),
+        );
     if (e instanceof HubError)
       return reply
         .code(e.statusCode)
@@ -119,6 +134,49 @@ export function buildApp(o: BuildOptions): FastifyInstance {
   );
   app.get("/v1/sources", async (req) =>
     ok(await o.repository.listSources(), req.id),
+  );
+  app.get("/v1/extensions", async (req) =>
+    ok(service.extensions.list(), req.id),
+  );
+  app.get("/v1/extensions/:id", async (req) =>
+    ok(
+      service.extensions.get(z.object({ id: z.string() }).parse(req.params).id),
+      req.id,
+    ),
+  );
+  app.post("/v1/extensions/:id/probe", async (req) =>
+    ok(
+      service.extensions.probe(
+        z.object({ id: z.string() }).parse(req.params).id,
+      ),
+      req.id,
+    ),
+  );
+  app.post("/v1/extensions/:id/lifecycle/:state", async (req) => {
+    const { id, state } = z
+      .object({
+        id: z.string(),
+        state: z.enum([
+          "installed",
+          "verified",
+          "canary",
+          "active",
+          "draining",
+          "disabled",
+          "failed",
+          "retired",
+        ]),
+      })
+      .parse(req.params);
+    return ok(service.extensions.transition(id, state), req.id);
+  });
+  app.get("/v1/extensions/:id/logs", async (req) =>
+    ok(
+      service.extensions.logs(
+        z.object({ id: z.string() }).parse(req.params).id,
+      ),
+      req.id,
+    ),
   );
   app.post("/v1/sources", async (req, reply) => {
     const b = sourceBody.parse(req.body);
@@ -263,6 +321,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     return ok(await service.transcripts(query), req.id);
   });
   app.post("/v1/sources/:id/resources", async (req, reply) => {
+    service.extensions.require("context-processor.document-parser");
     const id = z.object({ id: z.string().uuid() }).parse(req.params).id;
     const recordScope = z.object({
       botIds: z.array(z.string()).optional(),
@@ -285,6 +344,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     return reply.code(201).send(ok(await documents.ingest(id, body), req.id));
   });
   app.post("/v1/retrieve", async (req) => {
+    service.extensions.require("context-processor.lexical");
     const b = z
       .object({
         botId: z.string().min(1),
@@ -312,6 +372,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     return ok(await o.repository.listMemories(q), req.id);
   });
   app.post("/v1/memories/candidates", async (req, reply) => {
+    service.extensions.require("context-processor.memory-lifecycle");
     const b = z
       .object({
         botId: z.string().min(1),
@@ -328,6 +389,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     return reply.code(201).send(ok(await service.createMemory(b), req.id));
   });
   app.post("/v1/memories/:id/confirm", async (req) => {
+    service.extensions.require("context-processor.memory-lifecycle");
     const id = z.object({ id: z.string().uuid() }).parse(req.params).id,
       b = z
         .object({
@@ -341,6 +403,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     );
   });
   app.post("/v1/memories/:id/forget", async (req) => {
+    service.extensions.require("context-processor.memory-lifecycle");
     const id = z.object({ id: z.string().uuid() }).parse(req.params).id,
       b = z
         .object({ reason: z.string().min(1), correlationId: z.string().min(1) })

@@ -23,6 +23,8 @@ CH outputs are new immutable records with lineage to source session event ranges
 
 CH adds an extensible provider family for retrieval, reranking, summarization, compaction, entity extraction and memory candidate generation.
 
+The first implemented catalog includes lexical retrieval, document parsing and memory lifecycle processors plus all current source kinds. Source ingest, retrieve, document parsing and memory mutations resolve the catalog before execution. Reranking, summarization, compaction and entity extraction remain open Provider additions.
+
 ```ts
 interface ContextProcessorDescriptor {
   providerId: string;

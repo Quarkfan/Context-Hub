@@ -38,6 +38,7 @@
 - Source 和 Bot Binding 已提供显式 list/detail/create/update/delete API、依赖保护和 Dashboard 管理界面；高级配置覆盖 scope、source config 和 binding tags。
 - 合同测试覆盖 Bot 隔离、过期知识阻断、长期记忆生命周期和配置 CRUD，共 8 项。
 - 已明确 Runtime Session Event Ledger 与 CH 上下文/记忆边界，并设计 Context Processor provider、可追溯 materialization 和不删除源事件的 compaction artifact；见 `docs/session-context-projection.md`。
+- 八类 Context Source、关键词检索、文档解析和记忆生命周期已登记为可探测的扩展 Provider；source 保存/入库、retrieve、document ingest 和 memory 操作均经过扩展目录门控，管理 API 与 Dashboard 已接通。
 
 ## 下一步建议
 

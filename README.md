@@ -13,6 +13,7 @@ QuarkfanTools consumes this repository as a platform center. Until code is moved
 - Context retrieval contracts for runtime use
 - Memory candidate, confirmation, reinforcement, expiration, conflict, and forget flows
 - Bot-level authorization and governance hooks for context read/write/use-in-model
+- Context Source and Context Processor extension descriptors, probes and lifecycle gates
 
 Authoritative Context Hub notes live here:
 

@@ -9,6 +9,7 @@ import type {
   RetrievedContext,
 } from "./types.js";
 import { HubError } from "./platform.js";
+import { contextExtensions } from "./extensions.js";
 const now = () => new Date().toISOString(),
   hash = (v: string) => createHash("sha256").update(v).digest("hex"),
   stableUuid = (v: string) => {
@@ -25,6 +26,7 @@ const words = (v: string) => [
   ),
 ];
 export class ContextHubService {
+  readonly extensions = contextExtensions;
   constructor(readonly repo: ContextRepository) {}
   async source(id: string) {
     const v = await this.repo.getSource(id);
@@ -34,6 +36,7 @@ export class ContextHubService {
   async saveSource(
     i: Partial<ContextSource> & Pick<ContextSource, "name" | "kind">,
   ) {
+    this.extensions.require(`context-source.${i.kind}`);
     const old = i.id ? await this.repo.getSource(i.id) : undefined,
       n = now();
     return this.repo.saveSource({
@@ -43,8 +46,7 @@ export class ContextHubService {
       enabled: i.enabled ?? old?.enabled ?? true,
       scope: i.scope ?? old?.scope ?? {},
       config: i.config ?? old?.config ?? {},
-      freshnessTtlSeconds:
-        i.freshnessTtlSeconds ?? old?.freshnessTtlSeconds,
+      freshnessTtlSeconds: i.freshnessTtlSeconds ?? old?.freshnessTtlSeconds,
       lastIngestedAt: old?.lastIngestedAt,
       lastError: old?.lastError,
       status:
@@ -116,6 +118,7 @@ export class ContextHubService {
     items: Array<Partial<ContextRecord> & Pick<ContextRecord, "content">>,
   ) {
     const source = await this.source(sourceId);
+    this.extensions.require(`context-source.${source.kind}`);
     if (!source.enabled)
       throw new HubError("UNAVAILABLE", "Source is disabled", 409);
     const results = [];
@@ -192,7 +195,9 @@ export class ContextHubService {
     const bindings = await this.repo.listBindings(input.botId);
     if (!bindings.some((item) => item.sourceId === source!.id))
       await this.saveBinding({
-        id: stableUuid(`runtime-transcript-binding:${source.id}:${input.botId}`),
+        id: stableUuid(
+          `runtime-transcript-binding:${source.id}:${input.botId}`,
+        ),
         sourceId: source.id,
         botId: input.botId,
         priority: 10,
