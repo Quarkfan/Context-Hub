@@ -35,7 +35,8 @@
 - 已实现 source、Bot binding、record 幂等入库、scope 隔离、freshness 阻断、关键词召回和 generation trace。
 - 已实现记忆候选、长期记忆证据要求、人工确认、召回和可审计遗忘。
 - 已提供健康检查及 sources、bindings、records、retrieve、memories、freshness、traces API。
-- 合同测试覆盖 Bot 隔离、过期知识阻断和长期记忆生命周期。
+- Source 和 Bot Binding 已提供显式 list/detail/create/update/delete API、依赖保护和 Dashboard 管理界面；高级配置覆盖 scope、source config 和 binding tags。
+- 合同测试覆盖 Bot 隔离、过期知识阻断、长期记忆生命周期和配置 CRUD，共 8 项。
 
 ## 下一步建议
 
@@ -43,7 +44,7 @@
 2. 增加中文分词、向量/混合检索、rerank 和可替换 embedding provider。
 3. 将 Skill knowledge、受控飞书缓存引用、会话摘要和 runtime context 注入接到当前合同。
 4. 增加候选冲突合并、保留期/清理任务、数据导出/删除和策略决策记录。
-5. 补 PostgreSQL 集成测试、负载测试和 Dashboard 管理面。
+5. 补 PostgreSQL 集成测试和负载测试。
 
 ## 验证
 

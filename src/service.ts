@@ -40,31 +40,74 @@ export class ContextHubService {
       id: i.id ?? randomUUID(),
       name: i.name,
       kind: i.kind,
-      enabled: i.enabled ?? true,
-      scope: i.scope ?? {},
-      config: i.config ?? {},
-      freshnessTtlSeconds: i.freshnessTtlSeconds,
+      enabled: i.enabled ?? old?.enabled ?? true,
+      scope: i.scope ?? old?.scope ?? {},
+      config: i.config ?? old?.config ?? {},
+      freshnessTtlSeconds:
+        i.freshnessTtlSeconds ?? old?.freshnessTtlSeconds,
       lastIngestedAt: old?.lastIngestedAt,
       lastError: old?.lastError,
-      status: i.enabled === false ? "disabled" : (old?.status ?? "configured"),
+      status:
+        (i.enabled ?? old?.enabled) === false
+          ? "disabled"
+          : (old?.status ?? "configured"),
       createdAt: old?.createdAt ?? n,
       updatedAt: n,
     });
+  }
+  async removeSource(id: string) {
+    const source = await this.source(id);
+    if (source.config.managedType === "runtime-transcript")
+      throw new HubError(
+        "CONFLICT",
+        "Runtime transcript sources are managed by the platform",
+        409,
+      );
+    const bindings = (await this.repo.listBindings()).filter(
+      (binding) => binding.sourceId === id,
+    );
+    if (bindings.length)
+      throw new HubError(
+        "CONFLICT",
+        "Context source is still bound to bots",
+        409,
+        { bindingIds: bindings.map((binding) => binding.id) },
+      );
+    await this.repo.removeSource(id);
+    return { removed: true };
+  }
+  async binding(id: string) {
+    const value = (await this.repo.listBindings()).find(
+      (binding) => binding.id === id,
+    );
+    if (!value)
+      throw new HubError("NOT_FOUND", `Binding not found: ${id}`, 404);
+    return value;
+  }
+  async removeBinding(id: string) {
+    await this.binding(id);
+    await this.repo.removeBinding(id);
+    return { removed: true };
   }
   async saveBinding(
     i: Partial<ContextBinding> & Pick<ContextBinding, "sourceId" | "botId">,
   ) {
     await this.source(i.sourceId);
-    const n = now();
+    const old = i.id
+        ? (await this.repo.listBindings()).find(
+            (binding) => binding.id === i.id,
+          )
+        : undefined,
+      n = now();
     return this.repo.saveBinding({
       id: i.id ?? randomUUID(),
       sourceId: i.sourceId,
       botId: i.botId,
-      enabled: i.enabled ?? true,
-      priority: i.priority ?? 100,
-      maxAgeSeconds: i.maxAgeSeconds,
-      tags: i.tags ?? [],
-      createdAt: n,
+      enabled: i.enabled ?? old?.enabled ?? true,
+      priority: i.priority ?? old?.priority ?? 100,
+      maxAgeSeconds: i.maxAgeSeconds ?? old?.maxAgeSeconds,
+      tags: i.tags ?? old?.tags ?? [],
+      createdAt: old?.createdAt ?? n,
       updatedAt: n,
     });
   }

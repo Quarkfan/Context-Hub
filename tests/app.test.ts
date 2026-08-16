@@ -73,6 +73,82 @@ describe("Context Hub API", () => {
     expect(a.json().data.items).toHaveLength(1);
     expect(b.json().data.items).toHaveLength(0);
   });
+  it("supports source and binding CRUD with dependency protection", async () => {
+    const { app } = setup();
+    apps.push(app);
+    const created = await source(app, {
+      name: "Handbook",
+      kind: "manual",
+      freshnessTtlSeconds: 3600,
+    });
+    const updated = await app.inject({
+      method: "PUT",
+      url: `/v1/sources/${created.id}`,
+      headers,
+      payload: {
+        name: "Updated handbook",
+        kind: "manual",
+        enabled: false,
+        freshnessTtlSeconds: 7200,
+      },
+    });
+    expect(updated.statusCode).toBe(200);
+    expect(updated.json().data).toMatchObject({
+      name: "Updated handbook",
+      enabled: false,
+      freshnessTtlSeconds: 7200,
+    });
+    const binding = await app.inject({
+      method: "POST",
+      url: "/v1/bindings",
+      headers,
+      payload: { sourceId: created.id, botId: "bot-a", priority: 10 },
+    });
+    const bindingId = binding.json().data.id;
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/sources/${created.id}`,
+          headers,
+        })
+      ).statusCode,
+    ).toBe(409);
+    const editedBinding = await app.inject({
+      method: "PUT",
+      url: `/v1/bindings/${bindingId}`,
+      headers,
+      payload: {
+        sourceId: created.id,
+        botId: "bot-b",
+        priority: 20,
+        enabled: false,
+      },
+    });
+    expect(editedBinding.json().data).toMatchObject({
+      botId: "bot-b",
+      priority: 20,
+      enabled: false,
+    });
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/bindings/${bindingId}`,
+          headers,
+        })
+      ).json().data.removed,
+    ).toBe(true);
+    expect(
+      (
+        await app.inject({
+          method: "DELETE",
+          url: `/v1/sources/${created.id}`,
+          headers,
+        })
+      ).json().data.removed,
+    ).toBe(true);
+  });
   it("stores execution transcripts in a managed conversation source", async () => {
     const { app, repository } = setup();
     apps.push(app);

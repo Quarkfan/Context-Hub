@@ -29,6 +29,24 @@ const scope = z.object({
   botIds: z.array(z.string()).optional(),
   workspaceIds: z.array(z.string()).optional(),
 });
+const sourceBody = z.object({
+  id: z.string().uuid().optional(),
+  name: z.string().min(1),
+  kind: z.enum(sourceKinds),
+  enabled: z.boolean().optional(),
+  scope: scope.optional(),
+  config: z.record(z.string(), z.unknown()).optional(),
+  freshnessTtlSeconds: z.number().int().positive().optional(),
+});
+const bindingBody = z.object({
+  id: z.string().uuid().optional(),
+  sourceId: z.string().uuid(),
+  botId: z.string().min(1),
+  enabled: z.boolean().optional(),
+  priority: z.number().int().optional(),
+  maxAgeSeconds: z.number().int().positive().optional(),
+  tags: z.array(z.string()).optional(),
+});
 export function buildApp(o: BuildOptions): FastifyInstance {
   const app = Fastify({
       logger: o.logger ?? false,
@@ -103,26 +121,33 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     ok(await o.repository.listSources(), req.id),
   );
   app.post("/v1/sources", async (req, reply) => {
-    const b = z
-      .object({
-        id: z.string().uuid().optional(),
-        name: z.string().min(1),
-        kind: z.enum(sourceKinds),
-        enabled: z.boolean().optional(),
-        scope: scope.optional(),
-        config: z.record(z.string(), z.unknown()).optional(),
-        freshnessTtlSeconds: z.number().int().positive().optional(),
-      })
-      .parse(req.body);
+    const b = sourceBody.parse(req.body);
     return reply.code(201).send(ok(await service.saveSource(b), req.id));
+  });
+  app.get("/v1/sources/:id", async (req) =>
+    ok(
+      await service.source(
+        z.object({ id: z.string().uuid() }).parse(req.params).id,
+      ),
+      req.id,
+    ),
+  );
+  app.put("/v1/sources/:id", async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await service.source(id);
+    return ok(
+      await service.saveSource({
+        ...sourceBody.omit({ id: true }).parse(req.body),
+        id,
+      }),
+      req.id,
+    );
   });
   app.delete("/v1/sources/:id", async (req) =>
     ok(
-      {
-        removed: await o.repository.removeSource(
-          z.object({ id: z.string().uuid() }).parse(req.params).id,
-        ),
-      },
+      await service.removeSource(
+        z.object({ id: z.string().uuid() }).parse(req.params).id,
+      ),
       req.id,
     ),
   );
@@ -131,26 +156,33 @@ export function buildApp(o: BuildOptions): FastifyInstance {
     return ok(await o.repository.listBindings(q.botId), req.id);
   });
   app.post("/v1/bindings", async (req, reply) => {
-    const b = z
-      .object({
-        id: z.string().uuid().optional(),
-        sourceId: z.string().uuid(),
-        botId: z.string().min(1),
-        enabled: z.boolean().optional(),
-        priority: z.number().int().optional(),
-        maxAgeSeconds: z.number().int().positive().optional(),
-        tags: z.array(z.string()).optional(),
-      })
-      .parse(req.body);
+    const b = bindingBody.parse(req.body);
     return reply.code(201).send(ok(await service.saveBinding(b), req.id));
+  });
+  app.get("/v1/bindings/:id", async (req) =>
+    ok(
+      await service.binding(
+        z.object({ id: z.string().uuid() }).parse(req.params).id,
+      ),
+      req.id,
+    ),
+  );
+  app.put("/v1/bindings/:id", async (req) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(req.params);
+    await service.binding(id);
+    return ok(
+      await service.saveBinding({
+        ...bindingBody.omit({ id: true }).parse(req.body),
+        id,
+      }),
+      req.id,
+    );
   });
   app.delete("/v1/bindings/:id", async (req) =>
     ok(
-      {
-        removed: await o.repository.removeBinding(
-          z.object({ id: z.string().uuid() }).parse(req.params).id,
-        ),
-      },
+      await service.removeBinding(
+        z.object({ id: z.string().uuid() }).parse(req.params).id,
+      ),
       req.id,
     ),
   );
