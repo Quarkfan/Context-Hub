@@ -9,7 +9,10 @@ import type {
   RetrievedContext,
 } from "./types.js";
 import { HubError } from "./platform.js";
-import { contextExtensions } from "./extensions.js";
+import {
+  createContextExtensions,
+  type ExtensionStateRepository,
+} from "./extensions.js";
 const now = () => new Date().toISOString(),
   hash = (v: string) => createHash("sha256").update(v).digest("hex"),
   stableUuid = (v: string) => {
@@ -26,8 +29,13 @@ const words = (v: string) => [
   ),
 ];
 export class ContextHubService {
-  readonly extensions = contextExtensions;
-  constructor(readonly repo: ContextRepository) {}
+  readonly extensions;
+  constructor(
+    readonly repo: ContextRepository,
+    extensionRepository?: ExtensionStateRepository,
+  ) {
+    this.extensions = createContextExtensions(extensionRepository);
+  }
   async source(id: string) {
     const v = await this.repo.getSource(id);
     if (!v) throw new HubError("NOT_FOUND", `Source not found: ${id}`, 404);

@@ -8,11 +8,13 @@ import {
   DocumentIngestService,
   type ResourceReader,
 } from "./document-ingest.js";
+import type { ExtensionStateRepository } from "./extensions.js";
 export interface BuildOptions {
   repository: ContextRepository;
   internalToken: string;
   resourceReader?: ResourceReader;
   logger?: boolean | { level: string };
+  extensionRepository?: ExtensionStateRepository;
 }
 const sourceKinds = [
   "skill-knowledge",
@@ -52,7 +54,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
       logger: o.logger ?? false,
       genReqId: () => randomUUID(),
     }),
-    service = new ContextHubService(o.repository),
+    service = new ContextHubService(o.repository, o.extensionRepository),
     documents = new DocumentIngestService(
       service,
       o.resourceReader ?? {
@@ -65,6 +67,8 @@ export function buildApp(o: BuildOptions): FastifyInstance {
         },
       },
     );
+  app.addHook("onReady", async () => service.extensions.initialize());
+  app.addHook("onClose", async () => service.extensions.close());
   app.addHook("onRequest", async (req, reply) => {
     if (["/healthz", "/readyz", "/version"].includes(req.url)) return;
     if (req.headers.authorization !== `Bearer ${o.internalToken}`)
@@ -146,7 +150,7 @@ export function buildApp(o: BuildOptions): FastifyInstance {
   );
   app.post("/v1/extensions/:id/probe", async (req) =>
     ok(
-      service.extensions.probe(
+      await service.extensions.probe(
         z.object({ id: z.string() }).parse(req.params).id,
       ),
       req.id,
@@ -168,11 +172,11 @@ export function buildApp(o: BuildOptions): FastifyInstance {
         ]),
       })
       .parse(req.params);
-    return ok(service.extensions.transition(id, state), req.id);
+    return ok(await service.extensions.transition(id, state), req.id);
   });
   app.get("/v1/extensions/:id/logs", async (req) =>
     ok(
-      service.extensions.logs(
+      await service.extensions.logs(
         z.object({ id: z.string() }).parse(req.params).id,
       ),
       req.id,
