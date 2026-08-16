@@ -32,5 +32,10 @@ describe("context extension lifecycle", () => {
     await restored.initialize();
     expect(restored.get("context-source.test").lifecycleState).toBe("disabled");
     expect(await restored.logs("context-source.test")).toHaveLength(3);
+
+    expect((await restored.probe("context-source.test")).status).toBe("ready");
+    await restored.transition("context-source.test", "verified");
+    expect(restored.get("context-source.test").lifecycleState).toBe("verified");
+    expect(await restored.logs("context-source.test")).toHaveLength(6);
   });
 });
